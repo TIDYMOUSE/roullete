@@ -1,17 +1,20 @@
 [toolchain]
 
 [features]
-seeds = false
+# seeds = false
 skip-lint = false
 
 [programs.localnet]
-roullete = "GR7AVT5cwad3decrFzMKNz2tKnT5f3BALirQDegq63iZ"
+roullete = "mvtjnnwtwXKExeWAoMwemapbBxa2QUsr3TQfWHmMmzf"
+
+[progams.devnet]
+roullete = "mvtjnnwtwXKExeWAoMwemapbBxa2QUsr3TQfWHmMmzf"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "localnet"
 wallet = "/home/advait/.config/solana/id.json"
 
 [test]
