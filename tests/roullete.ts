@@ -1,122 +1,48 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
+import { AnchorError, Program } from "@coral-xyz/anchor";
 import { Roullete } from "../target/types/roullete";
 import { assert, expect } from "chai";
-import chai from "chai";
 import { Wallet } from "@coral-xyz/anchor/dist/cjs/provider";
-import { utf8 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
+
+import {
+  getBalances,
+  activateAccount,
+  convertLamportToSol,
+  shoot_s,
+  getEvent,
+} from "./utils";
 
 //!IMPORTANT: equal, equals and eq is same which are strict equality (===)
 // whereas eql and eqls are same meaning deep equality ( for objects and arrays )
 
-async function activateAccount(
-  provider: anchor.Provider,
-  address: anchor.web3.PublicKey
-) {
-  let tx = await provider.connection.requestAirdrop(
-    address,
-    anchor.web3.LAMPORTS_PER_SOL * 1
-  );
-  let blockhash = await provider.connection.getLatestBlockhash();
-
-  return await provider.connection.confirmTransaction({
-    blockhash: blockhash.blockhash,
-    lastValidBlockHeight: blockhash.lastValidBlockHeight,
-    signature: tx,
-  });
-}
-
-async function shoot_s(
-  program: anchor.Program<Roullete>,
-  shooter: anchor.web3.PublicKey,
-  game: anchor.web3.PublicKey,
-  target: anchor.web3.PublicKey,
-  signer?: [anchor.web3.Keypair] | []
-) {
-  await program.methods
-    .shoot(target)
-    .accounts({
-      shooter: shooter,
-    })
-    .signers(signer)
-    .rpc()
-    .catch((err) => {
-      console.log(err);
-      expect(err).to.be.instanceOf(anchor.AnchorError);
-      expect(err.error.errorCode.code).to.equal("NotPlayersTurn");
-      expect(err.error.errorCode.number).to.equal(6002);
-      expect(err.program.equals(program.programId)).is.true;
-      // console.log(err.error.comparedValues);
-    });
-}
-function convertLamportToSol(val: number) {
-  return val / anchor.web3.LAMPORTS_PER_SOL;
-}
-async function getBalances(
-  status: string,
-  conn: anchor.web3.Connection,
-  gameKeypair: anchor.web3.PublicKey,
-  playerOne: anchor.web3.PublicKey,
-  playerTwo: anchor.web3.PublicKey,
-  uncheckedAccPubkey: anchor.web3.PublicKey
-) {
-  console.log(`
-  ------------------------------------------------------------------------------------------------------------
-    ${status} balances :
-    gamekeypair (${gameKeypair}): ${convertLamportToSol(
-    await conn.getBalance(gameKeypair)
-  )} sol
-    playerone (${playerOne}) : ${convertLamportToSol(
-    await conn.getBalance(playerOne)
-  )} sol
-    playertwo (${playerTwo}) : ${convertLamportToSol(
-    await conn.getBalance(playerTwo)
-  )} sol
-    unchecked account (${uncheckedAccPubkey}) : ${convertLamportToSol(
-    await conn.getBalance(uncheckedAccPubkey)
-  )} sol
-  ------------------------------------------------------------------------------------------------------------
-  `);
-}
-
 describe("roullete", async () => {
-  //TODO: check if event is triggered
   let program: Program<Roullete>;
-  // let gameKeypair: anchor.web3.Keypair;
   let gameKeypair: anchor.web3.PublicKey;
-  let playerOne: Wallet;
+  // let playerOne: Wallet;
+  let playerOne: anchor.web3.Keypair;
   let playerTwo: anchor.web3.Keypair;
   let uncheckedAccPubkey: anchor.web3.PublicKey;
-  anchor.setProvider(anchor.AnchorProvider.local());
+  anchor.setProvider(anchor.AnchorProvider.env());
 
   before(async () => {
     //setting accounts
     program = anchor.workspace.Roullete as Program<Roullete>;
-    // gameKeypair = anchor.web3.Keypair.generate();
-    [gameKeypair] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("session")],
-      program.programId
-    );
-    playerOne = (program.provider as anchor.AnchorProvider).wallet;
-    // playerOne = anchor.web3.Keypair.generate();
+    // playerOne = (program.provider as anchor.AnchorProvider).wallet;
+    playerOne = anchor.web3.Keypair.generate();
     uncheckedAccPubkey = anchor.web3.SYSVAR_SLOT_HASHES_PUBKEY;
     playerTwo = anchor.web3.Keypair.generate();
+    [gameKeypair] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        playerOne.publicKey.toBuffer(),
+        playerTwo.publicKey.toBuffer(),
+        Buffer.from("session"),
+      ],
+      program.programId
+    );
 
     // activating accounts
-    // await activateAccount(program.provider, gameKeypair);
-    await activateAccount(program.provider, playerTwo.publicKey);
-    // await activateAccount(program.provider, playerOne.publicKey);
-    // console.log(await program.provider.connection.getAccountInfo(gameKeypair));
-    // {
-    //   data: <Buffer >,
-    //   executable: false,
-    //   lamports: 1000000000,
-    //   owner: PublicKey [PublicKey(11111111111111111111111111111111)] {
-    //     _bn: <BN: 0>
-    //   },
-    //   rentEpoch: 18446744073709552000,
-    //   space: 0
-    // }
+    await activateAccount(anchor.AnchorProvider.env(), playerTwo.publicKey);
+    await activateAccount(anchor.AnchorProvider.env(), playerOne.publicKey);
   });
 
   describe("initiation tests", () => {
@@ -143,13 +69,14 @@ describe("roullete", async () => {
           uncheckedAccPubkey
         )
     );
-    it("Player one added", async () => {
+    it("Players added", async () => {
       await program.methods
-        .joinSession()
+        .joinSession(playerOne.publicKey, playerTwo.publicKey)
         .accounts({
-          player: playerOne.publicKey,
+          playerOne: playerOne.publicKey,
+          playerTwo: playerTwo.publicKey,
         })
-        .signers([])
+        .signers([playerOne, playerTwo])
         .rpc()
         .catch((err) => console.log(err));
 
@@ -159,60 +86,19 @@ describe("roullete", async () => {
         playerOne.publicKey,
         "Player One mismatch"
       );
-    });
 
-    it("Player two added", async () => {
-      // const tx = await program.methods
-      //   .joinSession()
-      //   .accounts({
-      //     player: playerTwo.publicKey,
-      //   })
-      //   .transaction();
-
-      // const latestBlockhash =
-      //   await program.provider.connection.getLatestBlockhash();
-      // tx.recentBlockhash = latestBlockhash.blockhash;
-      // tx.feePayer = playerTwo.publicKey;
-
-      // tx.sign(playerTwo);
-
-      // const rawTransaction = tx.serialize();
-      // const txId = await program.provider.connection.sendRawTransaction(
-      //   rawTransaction,
-      //   {
-      //     skipPreflight: false,
-      //     preflightCommitment: "confirmed",
-      //   }
-      // );
-      // await program.provider.connection.confirmTransaction(txId);
-
-      // !IMPORTANT above code works and player2 pays but this doesnt
-      await program.methods
-        .joinSession()
-        .accounts({
-          player: playerTwo.publicKey, // PlayerTwo joins the session
-        })
-        .signers([playerTwo]) // PlayerTwo signs the transaction, which makes them pay for the transaction fees
-        .rpc(); // Sends the transaction and waits for confirmation
-
-      let session = await program.account.session.fetch(gameKeypair);
       expect(session.playerTwo).is.eql(
         playerTwo.publicKey,
-        "Player two mismatch"
-      );
-      console.log(
-        "PDA BALANCE: ",
-        await program.provider.connection.getBalance(gameKeypair)
+        "Player One mismatch"
       );
     });
 
     it("session started", async () => {
       const session = await program.account.session.fetch(gameKeypair);
-      expect(session.turn).is.equal(false, "turn is correct");
+      expect(session.turn).is.equal(false, "turn is not correct");
 
       expect(session.state).is.eql({ active: {} }, "game is not active");
       console.log("Session Load : ", session.load);
-      console.log("Sesssion state : ", session.state);
       expect(session.trigger).is.equals(0, "trigger is not set");
     });
   });
@@ -220,6 +106,8 @@ describe("roullete", async () => {
   describe("game tests", () => {
     let load: boolean[];
     let over: boolean;
+    let player_one_turn: boolean;
+
     before("setting load and all", async () => {
       load = (await program.account.session.fetch(gameKeypair)).load;
       over =
@@ -251,25 +139,51 @@ describe("roullete", async () => {
         )
     );
     it("turn increases ", async () => {
-      await shoot_s(
-        program,
-        playerOne.publicKey,
-        gameKeypair,
-        playerOne.publicKey,
-        []
-      );
-
       if (load[0]) {
+        let old_balance = convertLamportToSol(
+          await program.provider.connection.getBalance(playerOne.publicKey)
+        );
+        let event = await getEvent(program, "mementoMori", async () => {
+          await shoot_s(
+            program,
+            playerOne.publicKey,
+            gameKeypair,
+            playerOne.publicKey,
+            playerTwo.publicKey,
+            playerTwo.publicKey,
+            [playerOne]
+          );
+        });
+
+        let new_balance = convertLamportToSol(
+          await program.provider.connection.getBalance(playerOne.publicKey)
+        );
+
         over = true;
         expect((await program.account.session.fetch(gameKeypair)).turn).is.eq(
           false,
           "Turn not updated "
         );
         expect((await program.account.session.fetch(gameKeypair)).state).is.eql(
-          { won: { name: playerTwo.publicKey } },
-          "Player two didnt win"
+          { won: { winner: playerOne.publicKey } },
+          "Player 1 didnt win"
+        );
+
+        assert(
+          new_balance - old_balance == 0.020000000000000018 ||
+            new_balance - old_balance == 0.019999999999999907,
+          "Prize didn't get transferred"
         );
       } else {
+        await shoot_s(
+          program,
+          playerOne.publicKey,
+          gameKeypair,
+          playerOne.publicKey,
+          playerTwo.publicKey,
+          playerTwo.publicKey,
+          [playerOne]
+        );
         expect(
           (await program.account.session.fetch(gameKeypair)).turn
         ).is.equal(true, "turn not updated");
@@ -279,48 +193,83 @@ describe("roullete", async () => {
       }
     });
 
-    it("player two wins", async () => {
-      // TODO : All error checks
+    it(`player ${over ? "one" : "two"} wins ${
+      over ? "" : "and event is emitted and money deposited testing"
+    }`, async () => {
       if (!over) {
-        let player_one_turn = !(
-          await program.account.session.fetch(gameKeypair)
-        ).turn;
+        player_one_turn = !(await program.account.session.fetch(gameKeypair))
+          .turn;
         for (let i = 1; i < load.length; i++) {
           if (load[i]) {
+            let old_balance = convertLamportToSol(
+              await program.provider.connection.getBalance(playerTwo.publicKey)
+            );
             if (player_one_turn) {
-              await shoot_s(
-                program,
+              let event = await getEvent(program, "mementoMori", async () => {
+                await shoot_s(
+                  program,
+                  playerOne.publicKey,
+                  gameKeypair,
+                  playerOne.publicKey,
+                  playerTwo.publicKey,
+                  playerOne.publicKey,
+                  [playerOne]
+                );
+              });
+
+              expect(event.shooter).is.eql(
                 playerOne.publicKey,
-                gameKeypair,
-                playerOne.publicKey,
-                []
+                "Wrong shooter"
               );
-              break;
+              expect(event.target).is.eql(playerOne.publicKey, "Wrong target");
+              expect(event.winner).is.eql(playerTwo.publicKey, "Wrong winner");
             } else {
-              await shoot_s(
-                program,
+              let event = await getEvent(program, "mementoMori", async () => {
+                await shoot_s(
+                  program,
+                  playerTwo.publicKey,
+                  gameKeypair,
+                  playerOne.publicKey,
+                  playerTwo.publicKey,
+                  playerOne.publicKey,
+                  [playerTwo]
+                );
+              });
+              expect(event.shooter).is.eql(
                 playerTwo.publicKey,
-                gameKeypair,
-                playerOne.publicKey,
-                [playerTwo]
+                "Wrong shooter"
               );
-              break;
+              expect(event.target).is.eql(playerOne.publicKey, "Wrong target");
+              expect(event.winner).is.eql(playerTwo.publicKey, "Wrong winner");
             }
+            let new_balance = convertLamportToSol(
+              await program.provider.connection.getBalance(playerTwo.publicKey)
+            );
+            assert(
+              new_balance - old_balance == 0.020000000000000018 ||
+                new_balance - old_balance == 0.019999999999999907,
+              "Prize didn't get transferred"
+            );
+            break;
           } else {
             if (player_one_turn) {
               await shoot_s(
                 program,
                 playerOne.publicKey,
                 gameKeypair,
+                playerOne.publicKey,
                 playerTwo.publicKey,
-                []
+                playerTwo.publicKey,
+                [playerOne]
               );
             } else {
               await shoot_s(
                 program,
                 playerTwo.publicKey,
                 gameKeypair,
+                playerOne.publicKey,
                 playerTwo.publicKey,
+                playerOne.publicKey,
                 [playerTwo]
               );
             }
@@ -328,17 +277,130 @@ describe("roullete", async () => {
           player_one_turn = !player_one_turn;
         }
 
-        console.log(
-          "Final state: ",
-          (await program.account.session.fetch(gameKeypair)).state
-        );
         expect(
           (await program.account.session.fetch(gameKeypair)).state
         ).is.eqls(
           { won: { winner: playerTwo.publicKey } }, // IMPORTANT :  small w in Won
           "Player two didn't win"
         );
+      } else {
+        expect(
+          (await program.account.session.fetch(gameKeypair)).state
+        ).is.eqls(
+          { won: { winner: playerOne.publicKey } }, // IMPORTANT :  small w in Won
+          "Player one didn't win"
+        );
       }
+    });
+
+    it("join session already started", async () => {
+      try {
+        await program.methods
+          .joinSession(playerOne.publicKey, playerTwo.publicKey)
+          .accounts({
+            playerOne: playerOne.publicKey,
+            playerTwo: playerTwo.publicKey,
+          })
+          .signers([playerOne, playerTwo])
+          .rpc();
+      } catch (err) {
+        expect(err).to.be.instanceOf(anchor.AnchorError);
+        expect(err.error.errorCode.code).to.equal("SessionAlreadyStarted");
+        expect(err.error.errorCode.number).to.equal(6001);
+        expect(err.error.errorMessage).to.equal("Session has started");
+        expect(err.program.equals(program.programId)).is.true;
+      }
+    });
+
+    it("testing session over", async () => {
+      try {
+        await program.methods
+          .shoot(playerTwo.publicKey)
+          .accounts({
+            shooter: player_one_turn
+              ? playerOne.publicKey
+              : playerTwo.publicKey,
+            playerOne: playerOne.publicKey,
+            playerTwo: playerTwo.publicKey,
+          })
+          .signers(player_one_turn ? [playerOne] : [playerTwo])
+          .rpc();
+      } catch (err) {
+        expect(err).to.be.instanceOf(anchor.AnchorError);
+        expect(err.error.errorCode.code).to.equal("SessionAlreadyOver");
+        expect(err.error.errorCode.number).to.equal(6000);
+        expect(err.error.errorMessage).to.equal("Session is over");
+        expect(err.program.equals(program.programId)).is.true;
+      }
+    });
+
+    it("New session!?", async () => {
+      let p1 = anchor.web3.Keypair.generate();
+      let p2 = anchor.web3.Keypair.generate();
+      await activateAccount(anchor.AnchorProvider.env(), p1.publicKey);
+      await activateAccount(anchor.AnchorProvider.env(), p2.publicKey);
+      let [ng] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          p1.publicKey.toBuffer(),
+          p2.publicKey.toBuffer(),
+          Buffer.from("session"),
+        ],
+        program.programId
+      );
+      await program.methods
+        .joinSession(p1.publicKey, p2.publicKey)
+        .accounts({ playerOne: p1.publicKey, playerTwo: p2.publicKey })
+        .signers([p1, p2])
+        .rpc()
+        .catch((err) => {
+          console.log(err);
+        });
+      expect((await program.account.session.fetch(ng)).playerOne).is.eql(
+        p1.publicKey
+      );
+
+      await shoot_s(
+        program,
+        p1.publicKey,
+        ng,
+        p1.publicKey,
+        p2.publicKey,
+        p2.publicKey,
+        [p1]
+      );
+      expect((await program.account.session.fetch(ng)).turn).is.equal(
+        !(await program.account.session.fetch(ng)).load[0],
+        "turn not updated"
+      );
+      expect((await program.account.session.fetch(ng)).trigger).is.equals(
+        1,
+        "trigger not updated"
+      );
     });
   });
 });
+
+// OTHER WAY TO SEND TRANSACTIONS
+// const tx = await program.methods
+//   .joinSession()
+//   .accounts({
+//     player: playerTwo.publicKey,
+//   })
+//   .transaction();
+
+// const latestBlockhash =
+//   await program.provider.connection.getLatestBlockhash();
+// tx.recentBlockhash = latestBlockhash.blockhash;
+// tx.feePayer = playerTwo.publicKey;
+
+// tx.sign(playerTwo);
+
+// const rawTransaction = tx.serialize();
+// const txId = await program.provider.connection.sendRawTransaction(
+//   rawTransaction,
+//   {
+//     skipPreflight: false,
+//     preflightCommitment: "confirmed",
+//   }
+// );
+// await program.provider.connection.confirmTransaction(txId);

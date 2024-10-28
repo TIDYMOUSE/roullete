@@ -5,7 +5,7 @@
 skip-lint = false
 
 [programs.localnet]
-roullete = "mvtjnnwtwXKExeWAoMwemapbBxa2QUsr3TQfWHmMmzf"
+roullete = "7MsxXCMjGpb21eykEzP2hdZ1xGgWy3Kb2WQDP2z6RFD"
 
 [progams.devnet]
 roullete = "mvtjnnwtwXKExeWAoMwemapbBxa2QUsr3TQfWHmMmzf"

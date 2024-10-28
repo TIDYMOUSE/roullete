@@ -1,33 +1,34 @@
-use crate::errors::RoulleteErrors;
+use crate::errors::*;
 use crate::events::*;
 use anchor_lang::prelude::*;
 
-// TODO: trigger out of bounds?
+// TODO: turn array
+
+// Logic:
+// turn 0-> first player,
+// turn 1-> second player
 #[account]
 pub struct Session {
-    player_one: Option<Pubkey>, // 32 + 1
-    player_two: Option<Pubkey>, // 32 + 1
-    turn: bool,                 // 1 (0 for playerOne and 1 for playerTwo)
-    load: [bool; 6],            // 1 * 6
-    trigger: u8,                //1
-    state: State,               // 32 + 1
+    player_one: Pubkey, // 32
+    player_two: Pubkey, // 32
+    turn: bool,         // 1 (0 for playerOne and 1 for playerTwo)
+    load: [bool; 6],    // 1 * 6
+    trigger: u8,        //1
+    state: State,       // 32 + 2
 }
 
 impl Session {
-    pub const MAX_SIZE: usize = (33 * 2) + 1 + (1 * 6) + 1 + (32 + 1);
+    pub const MAX_SIZE: usize = (32 * 2) + 1 + (1 * 6) + 1 + (32 + 2);
 
-    pub fn join_session(&mut self, player: Pubkey, most_recent: &[u8; 8]) -> Result<()> {
-        if self.player_one.is_none() {
-            self.player_one = Some(player);
-            Ok(())
-        } else {
-            self.player_two = Some(player);
-            self.start_session(most_recent)
-        }
-    }
-
-    fn start_session(&mut self, most_recent: &[u8; 8]) -> Result<()> {
-        // require_eq!(self.state, State::Active || State::Won { winner: () }, RoulleteErrors::SessionAlreadyStarted);
+    pub fn start_session(
+        &mut self,
+        player_one: Pubkey,
+        player_two: Pubkey,
+        most_recent: &[u8; 8],
+    ) -> Result<()> {
+        self.player_one = player_one;
+        self.player_two = player_two;
+        self.state = State::Active;
         self.turn = false;
         self.trigger = 0;
         let clock = Clock::get()?;
@@ -39,43 +40,42 @@ impl Session {
     pub fn shoot(&mut self, target: Pubkey) -> Result<()> {
         require!(self.is_active(), RoulleteErrors::SessionAlreadyOver);
         if self.load[self.trigger as usize] {
-            let winner: Pubkey;
-            if target == self.current_player() {
-                winner = self.other_player();
-            } else {
-                winner = self.current_player();
-            }
+            let shooter = self.current_player();
+            let opponent = self.other_player();
+            let winner = if target == shooter { opponent } else { shooter };
 
             emit!(MementoMori {
-                shooter: self.current_player(),
-                target: target,
+                shooter,
+                target,
                 winner
             });
-            self.state = State::Won { winner }
+            self.state = State::Won { winner };
         } else {
             if self.state == State::Active {
-                self.trigger += 1;
-                if target == self.current_player() {
+                if target == self.other_player() {
                     self.turn = !self.turn;
                 }
+            } else {
+                return Err(RoulleteErrors::InternalGameError.into());
             }
         }
+        self.trigger += 1;
         Ok(())
     }
 
     fn other_player(&self) -> Pubkey {
         if self.turn {
-            self.player_one.unwrap()
+            self.player_one
         } else {
-            self.player_two.unwrap()
+            self.player_two
         }
     }
 
-    pub fn current_player(&self) -> Pubkey {
+    fn current_player(&self) -> Pubkey {
         if !self.turn {
-            self.player_one.unwrap()
+            self.player_one
         } else {
-            self.player_two.unwrap()
+            self.player_two
         }
     }
 
@@ -83,8 +83,13 @@ impl Session {
         self.state == State::Active
     }
 
-    pub fn get_state(&self) -> State {
-        self.state
+    pub fn get_state(&self) -> GameStamp {
+        GameStamp {
+            state: self.state,
+            load: self.load,
+            player_one: self.player_one,
+            player_two: self.player_two,
+        }
     }
 }
 
@@ -92,4 +97,12 @@ impl Session {
 pub enum State {
     Active,
     Won { winner: Pubkey },
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct GameStamp {
+    pub state: State,
+    pub load: [bool; 6],
+    pub player_one: Pubkey,
+    pub player_two: Pubkey,
 }

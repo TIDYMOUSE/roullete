@@ -2,7 +2,10 @@ use anchor_lang::error_code;
 
 #[error_code]
 pub enum RoulleteErrors {
-    SessionAlreadyOver,    //6000
+    #[msg("Session is over")]
+    SessionAlreadyOver, //6000
+    #[msg("Session has started")]
     SessionAlreadyStarted, //6001
-    NotPlayersTurn,        //6002
+    #[msg("Some logic error!")]
+    InternalGameError, //6002
 }
